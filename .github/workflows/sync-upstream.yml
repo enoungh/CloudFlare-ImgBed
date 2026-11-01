@@ -1,3 +1,4 @@
+
 name: Upstream Sync
 
 permissions:
@@ -32,6 +33,14 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
+
+      # 备份自己的同步工作流，防止被上游覆盖
+      - name: Backup custom sync workflow
+        run: |
+          mkdir -p "$RUNNER_TEMP/sync-backup"
+          cp .github/workflows/sync-upstream.yml \
+            "$RUNNER_TEMP/sync-backup/sync-upstream.yml"
 
       - name: Check breaking update policy
         id: breaking_guard
@@ -52,6 +61,43 @@ jobs:
           target_sync_branch: main
           target_repo_token: ${{ secrets.UPSTREAM_SYNC_PAT }}
           test_mode: false
+
+      # 上游同步完成后，恢复自己的工作流文件
+      - name: Restore custom sync workflow
+        if: steps.sync.outcome == 'success'
+        env:
+          UPSTREAM_SYNC_PAT: ${{ secrets.UPSTREAM_SYNC_PAT }}
+        run: |
+          set -euo pipefail
+
+          TARGET_FILE=".github/workflows/sync-upstream.yml"
+          BACKUP_FILE="$RUNNER_TEMP/sync-backup/sync-upstream.yml"
+
+          # 恢复原来的自定义工作流
+          test -f "$BACKUP_FILE"
+          mkdir -p .github/workflows
+          cp "$BACKUP_FILE" "$TARGET_FILE"
+
+          # 只提交这个工作流文件的恢复操作
+          git add "$TARGET_FILE"
+
+          if git diff --cached --quiet; then
+            echo "Custom sync workflow is unchanged."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git commit -m "Preserve custom sync-upstream workflow"
+
+          # 使用原来的 PAT 推送恢复后的文件
+          git remote set-url origin \
+            "https://x-access-token:${UPSTREAM_SYNC_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git push origin HEAD:main
+
+          echo "Custom sync workflow restored successfully."
 
       - name: Complete breaking update notices
         if: steps.sync.outcome == 'success'
@@ -79,6 +125,8 @@ jobs:
             echo
             echo "Please manually use **Sync fork** on GitHub, confirm that Actions has read and write permissions, and then rerun this workflow."
           } >> "$GITHUB_STEP_SUMMARY"
+
           echo "[Error] 上游同步未能完成。若上游近期修改了 workflow 文件，请先在 GitHub 页面手动执行一次 Sync Fork，然后重新运行本工作流。"
           echo "[Error] The upstream sync could not be completed. If the upstream workflow files changed recently, manually run Sync Fork on GitHub and then rerun this workflow."
+
           exit 1
