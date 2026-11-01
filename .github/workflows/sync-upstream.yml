@@ -108,7 +108,7 @@ jobs:
       - name: Trigger Worker deploy
         if: steps.sync.outcome == 'success'
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: gh workflow run deploy-worker.yml --repo "${{ github.repository }}" --ref main
 
       - name: Sync failure guidance
